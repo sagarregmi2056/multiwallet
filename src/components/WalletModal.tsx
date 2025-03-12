@@ -26,7 +26,7 @@ const WalletModal = ({ isOpen, onClose }: WalletModalProps) => {
 
     const [loading, setLoading] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const [connectedWallet, setConnectedWallet] = useState<string | null>(null);
+    const [connectedWallets, setConnectedWallets] = useState<Record<string, string>>({});
 
     // Cleanup on unmount
     useEffect(() => {
@@ -241,23 +241,64 @@ const WalletModal = ({ isOpen, onClose }: WalletModalProps) => {
         }
     ];
 
+    // Function to disconnect current wallet
+    const disconnectWallet = async (walletId: string) => {
+        try {
+            switch (walletId) {
+                case 'metamask':
+                    if (window.ethereum) {
+                        // MetaMask doesn't have a direct disconnect method
+                        delete connectedWallets.metamask;
+                    }
+                    break;
+                case 'phantom':
+                    if (window.phantom?.solana) {
+                        await window.phantom.solana.disconnect();
+                        delete connectedWallets.phantom;
+                    }
+                    break;
+                // Add other wallet disconnect cases
+            }
+            setConnectedWallets({ ...connectedWallets });
+        } catch (error) {
+            console.error('Error disconnecting wallet:', error);
+        }
+    };
+
     const handleWalletConnect = async (wallet: typeof walletOptions[0]) => {
+        if (loading) return;
+
         setLoading(wallet.id);
         setError(null);
 
         try {
+            // If this wallet is already connected, disconnect it first
+            if (connectedWallets[wallet.id]) {
+                await disconnectWallet(wallet.id);
+                setLoading(null);
+                return;
+            }
+
             const address = await wallet.connect();
+
             if (!address) {
                 throw new Error('No address returned');
             }
-            setConnectedWallet(address);
-            console.log(`${wallet.name} connected successfully:`, address);
-            onClose(); // Close modal on success
+
+            // Update connected wallets
+            setConnectedWallets(prev => ({
+                ...prev,
+                [wallet.id]: address
+            }));
+
+            // Show success message
+            console.log(`${wallet.name} Connected: ${address.slice(0, 6)}...${address.slice(-4)}`);
+
         } catch (error) {
             console.error('Connection error:', error);
-            const errorMessage = error instanceof Error ? error.message : 'An error occurred';
-            setError(errorMessage);
-            setLoading(null); // Reset loading state on error
+            setError(error instanceof Error ? error.message : 'Connection failed');
+        } finally {
+            setLoading(null);
         }
     };
 
@@ -284,43 +325,67 @@ const WalletModal = ({ isOpen, onClose }: WalletModalProps) => {
                     </div>
                 )}
 
-                {/* Connected Wallet Message */}
-                {connectedWallet && (
-                    <div className="p-4 mx-6 mt-4 bg-green-50 text-green-600 text-sm rounded-lg">
-                        Wallet connected: {connectedWallet.slice(0, 6)}...{connectedWallet.slice(-4)}
-                    </div>
-                )}
-
                 {/* Wallet Grid */}
                 <div className="p-6">
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-                        {walletOptions.map((wallet) => (
-                            <button
-                                key={wallet.id}
-                                onClick={() => handleWalletConnect(wallet)}
-                                disabled={!!loading}
-                                className={`
-                  flex flex-col items-center justify-center p-4 border rounded-xl
-                  transition-all hover:shadow-md space-y-2
-                  ${loading === wallet.id ? 'bg-gray-50 cursor-wait' : 'hover:border-gray-400'}
-                  ${loading && loading !== wallet.id ? 'opacity-50 cursor-not-allowed' : ''}
-                `}
-                            >
-                                <div className="w-12 h-12 relative">
-                                    <Image
-                                        src={wallet.image}
-                                        alt={wallet.name}
-                                        fill
-                                        className="object-contain"
-                                    />
-                                </div>
-                                <span className="text-sm font-medium text-center">
-                                    {loading === wallet.id ? 'Connecting...' : wallet.name}
-                                </span>
-                            </button>
-                        ))}
+                        {walletOptions.map((wallet) => {
+                            const isConnected = !!connectedWallets[wallet.id];
+                            return (
+                                <button
+                                    key={wallet.id}
+                                    onClick={() => handleWalletConnect(wallet)}
+                                    disabled={!!loading && loading !== wallet.id}
+                                    className={`
+                                        flex flex-col items-center justify-center p-4 border rounded-xl
+                                        transition-all hover:shadow-md space-y-2
+                                        ${loading === wallet.id ? 'bg-gray-50 cursor-wait' : ''}
+                                        ${isConnected ? 'border-green-500 bg-green-50' : 'hover:border-gray-400'}
+                                        ${loading && loading !== wallet.id ? 'opacity-50 cursor-not-allowed' : ''}
+                                    `}
+                                >
+                                    <div className="w-12 h-12 relative">
+                                        <Image
+                                            src={wallet.image}
+                                            alt={wallet.name}
+                                            fill
+                                            className="object-contain"
+                                        />
+                                    </div>
+                                    <span className="text-sm font-medium text-center">
+                                        {loading === wallet.id
+                                            ? 'Connecting...'
+                                            : isConnected
+                                                ? 'Connected'
+                                                : wallet.name}
+                                    </span>
+                                    {isConnected && (
+                                        <span className="text-xs text-green-600">
+                                            {connectedWallets[wallet.id].slice(0, 6)}...
+                                            {connectedWallets[wallet.id].slice(-4)}
+                                        </span>
+                                    )}
+                                </button>
+                            );
+                        })}
                     </div>
                 </div>
+
+                {/* Connected Wallets Summary */}
+                {Object.keys(connectedWallets).length > 0 && (
+                    <div className="border-t p-4">
+                        <h3 className="text-sm font-medium mb-2">Connected Wallets:</h3>
+                        <div className="space-y-2">
+                            {Object.entries(connectedWallets).map(([id, address]) => (
+                                <div key={id} className="flex items-center justify-between text-sm">
+                                    <span>{walletOptions.find(w => w.id === id)?.name}</span>
+                                    <span className="text-gray-500">
+                                        {address.slice(0, 6)}...{address.slice(-4)}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 {/* Footer */}
                 <div className="border-t p-4">
